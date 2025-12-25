@@ -18,7 +18,7 @@ app.use(express.json());
 
 
 
-const serviceAccount = require("./firebase-admin-key.json.json");
+const serviceAccount = require("./kickbox-admin-key.json");
 
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount)
@@ -120,7 +120,7 @@ async function run() {
 
 
 
-        app.get("/orders", async (req, res) => {
+        app.get("/orders",verifyFBToken, async (req, res) => {
             const {
                 page = 1,
                 limit = 8,
@@ -157,7 +157,7 @@ async function run() {
         });
 
 
-        app.get("/orders/:id", async (req, res) => {
+        app.get("/orders/:id",verifyFBToken, async (req, res) => {
             const { id } = req.params;
             const order = await ordersCollection.findOne({ _id: new ObjectId(id) });
 
@@ -238,7 +238,7 @@ async function run() {
             res.send(result);
         })
 
-        app.post("/shoes", async (req, res) => {
+        app.post("/shoes",verifyFBToken, async (req, res) => {
             const product = req.body;
             // Insert product into MongoDB
             const result = await shoesCollection.insertOne(product);
@@ -287,7 +287,7 @@ async function run() {
 
 
 
-        app.delete("/shoes/:id", async (req, res) => {
+        app.delete("/shoes/:id",verifyFBToken, async (req, res) => {
             const { id } = req.params;
 
             try {
@@ -309,7 +309,7 @@ async function run() {
         });
 
 
-        app.delete("/orders/:id", async (req, res) => {
+        app.delete("/orders/:id",verifyFBToken, async (req, res) => {
             try {
                 const { id } = req.params;
 
