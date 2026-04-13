@@ -21,20 +21,22 @@ app.use(express.json());
 const serviceAccount = require("./kickbox-admin-key.json");
 
 admin.initializeApp({
-  credential: admin.credential.cert(serviceAccount)
+    credential: admin.credential.cert(serviceAccount)
 });
 
+const uri = `mongodb+srv://${encodeURIComponent(process.env.DB_USER)}:${encodeURIComponent(process.env.DB_PASS)}@cluster0.gdfsllv.mongodb.net/?appName=Cluster0`;
+console.log("USER:", `"${process.env.DB_USER}"`);
 
+console.log("PASS:", `"${process.env.DB_PASS}"`);
 
-const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.gdfsllv.mongodb.net/?appName=Cluster0`;
 
 const client = new MongoClient(uri, {
     serverApi: {
-        version: ServerApiVersion.v1,
-        strict: true,
-        deprecationErrors: true,
+      version: ServerApiVersion.v1,
+      strict: true,
+      deprecationErrors: true,
     }
-});
+  });
 
 
 const emailTransporter = nodemailer.createTransport(
@@ -50,9 +52,9 @@ const emailTransporter = nodemailer.createTransport(
 async function run() {
     try {
         // Connect the client to the server	(optional starting in v4.7)
-        // await client.connect();
+        await client.connect();
         const db = client.db("kickboxbd");
-        
+
         const shoesCollection = db.collection("shoes");
         const ordersCollection = db.collection("orders");
 
@@ -103,7 +105,7 @@ async function run() {
                 <p><strong>Total Amount:</strong> ${order.totalAmount}৳</p>
                 <h3>Products:</h3>
                 <ul>
-                  ${order.products.map(p => `<li>${p.name} - Size: ${p.size} - Qty: ${p.quantity} - Price: ${p.price}৳</li>`).join('')}
+                  ${order.products.map(p => `<li>${p.name} - Size: ${p.size} - Color - ${p.color}  Qty: ${p.quantity} - Price: ${p.price}৳</li>`).join('')}
                 </ul>
               `
             };
@@ -120,7 +122,7 @@ async function run() {
 
 
 
-        app.get("/orders",verifyFBToken, async (req, res) => {
+        app.get("/orders", verifyFBToken, async (req, res) => {
             const {
                 page = 1,
                 limit = 8,
@@ -157,7 +159,7 @@ async function run() {
         });
 
 
-        app.get("/orders/:id",verifyFBToken, async (req, res) => {
+        app.get("/orders/:id", verifyFBToken, async (req, res) => {
             const { id } = req.params;
             const order = await ordersCollection.findOne({ _id: new ObjectId(id) });
 
@@ -171,62 +173,62 @@ async function run() {
 
         app.get("/shoes", async (req, res) => {
             const {
-              category,
-              popular,
-              discount,
-              search,
-              sort,        // low-high | high-low
-              page = 1,
-              limit = 8,
+                category,
+                popular,
+                discount,
+                search,
+                sort,        // low-high | high-low
+                page = 1,
+                limit = 8,
             } = req.query;
-          
+
             const query = {};
             let sortQuery = {};
-          
+
             if (category) query.category = category;
             if (popular !== undefined) query.popular = popular === "true";
-          
+
             if (discount === "true") {
-              query.discountPrice = { $gt: 0 };
+                query.discountPrice = { $gt: 0 };
             }
-          
+
             // 🔍 search
             if (search) {
-              query.name = { $regex: search, $options: "i" };
+                query.name = { $regex: search, $options: "i" };
             }
-          
+
             // 💰 price sorting
             if (sort === "low-high") {
-              sortQuery = discount === "true"
-                ? { discountPrice: 1 }
-                : { price: 1 };
+                sortQuery = discount === "true"
+                    ? { discountPrice: 1 }
+                    : { price: 1 };
             }
-          
+
             if (sort === "high-low") {
-              sortQuery = discount === "true"
-                ? { discountPrice: -1 }
-                : { price: -1 };
+                sortQuery = discount === "true"
+                    ? { discountPrice: -1 }
+                    : { price: -1 };
             }
-          
+
             const skip = (page - 1) * limit;
-          
+
             const shoes = await shoesCollection
-              .find(query)
-              .sort(sortQuery)
-              .skip(skip)
-              .limit(parseInt(limit))
-              .toArray();
-          
+                .find(query)
+                .sort(sortQuery)
+                .skip(skip)
+                .limit(parseInt(limit))
+                .toArray();
+
             const total = await shoesCollection.countDocuments(query);
-          
+
             res.send({
-              shoes,
-              total,
-              page: parseInt(page),
-              limit: parseInt(limit),
+                shoes,
+                total,
+                page: parseInt(page),
+                limit: parseInt(limit),
             });
-          });
-          
+        });
+
 
 
 
@@ -238,7 +240,7 @@ async function run() {
             res.send(result);
         })
 
-        app.post("/shoes",verifyFBToken, async (req, res) => {
+        app.post("/shoes", verifyFBToken, async (req, res) => {
             const product = req.body;
             // Insert product into MongoDB
             const result = await shoesCollection.insertOne(product);
@@ -251,7 +253,7 @@ async function run() {
 
 
                 const orderData = req.body;
-                
+
                 const { customer, products, totalAmount } = orderData;
                 if (
                     !customer ||
@@ -287,7 +289,7 @@ async function run() {
 
 
 
-        app.delete("/shoes/:id",verifyFBToken, async (req, res) => {
+        app.delete("/shoes/:id", verifyFBToken, async (req, res) => {
             const { id } = req.params;
 
             try {
@@ -309,7 +311,7 @@ async function run() {
         });
 
 
-        app.delete("/orders/:id",verifyFBToken, async (req, res) => {
+        app.delete("/orders/:id", verifyFBToken, async (req, res) => {
             try {
                 const { id } = req.params;
 
@@ -339,39 +341,37 @@ async function run() {
             }
         });
 
-        
-          
+
+
 
         app.patch("/shoes/:id", async (req, res) => {
             try {
-              const { id } = req.params;
-              const updateData = req.body;
-          
-              const result = await shoesCollection.updateOne(
-                { _id: new ObjectId(id) },
-                {
-                  $set: {
-                    ...updateData,
-                    updatedAt: new Date(),
-                  },
+                const { id } = req.params;
+                const updateData = req.body;
+
+                const result = await shoesCollection.updateOne(
+                    { _id: new ObjectId(id) },
+                    {
+                        $set: {
+                            ...updateData,
+                            updatedAt: new Date(),
+                        },
+                    }
+                );
+
+                if (result.matchedCount === 0) {
+                    return res.status(404).send({ message: "Shoe not found" });
                 }
-              );
-          
-              if (result.matchedCount === 0) {
-                return res.status(404).send({ message: "Shoe not found" });
-              }
-          
-              res.send({ success: true, message: "Shoe updated successfully" });
+
+                res.send({ success: true, message: "Shoe updated successfully" });
             } catch (error) {
-              res.status(500).send({ message: "Update failed" });
+                res.status(500).send({ message: "Update failed" });
             }
-          });
+        });
 
         app.patch("/items/update/update-stock", async (req, res) => {
-            console.log('hello')
             try {
               const { products } = req.body;
-              console.log('helop',products)
           
               for (const item of products) {
                 const shoe = await shoesCollection.findOne({
@@ -382,26 +382,81 @@ async function run() {
                   return res.status(404).send({ message: "Product not found" });
                 }
           
-                // 🟢 Accessories / Shoe care
-                if (shoe.stock !== "") {
-                  if (shoe.stock < item.quantity) {
-                    return res.status(400).send({
-                      message: `Out of stock: ${shoe.name}`,
-                    });
+                const isSimple =
+                  shoe.category === "Shoe care" ||
+                  shoe.category === "Shoe accessories";
+          
+                const isCap = shoe.category === "Caps";
+          
+                // =====================
+                // 🧴 SIMPLE PRODUCTS
+                // =====================
+                if (isSimple) {
+                  if ((shoe.totalStock || 0) < item.quantity) {
+                    return res
+                      .status(400)
+                      .send({ message: `Out of stock: ${shoe.name}` });
                   }
           
                   await shoesCollection.updateOne(
                     { _id: shoe._id },
                     {
-                      $inc: { stock: -item.quantity },
+                      $inc: { totalStock: -item.quantity },
                       $set: { updatedAt: new Date() },
                     }
                   );
                 }
           
-                // 🟢 Shoes (size-based)
-                else if (shoe.stockBySize && item.size) {
-                  const sizeStock = shoe.stockBySize[item.size];
+                // =====================
+                // 🧢 CAPS (COLOR BASED)
+                // =====================
+                else if (isCap) {
+                  const variant = shoe.variants?.find(
+                    (v) => v.color === item.color
+                  );
+          
+                  if (!variant) {
+                    return res
+                      .status(400)
+                      .send({ message: `Color not found: ${item.color}` });
+                  }
+          
+                  if ((variant.stock || 0) < item.quantity) {
+                    return res.status(400).send({
+                      message: `Color ${item.color} out of stock for ${shoe.name}`,
+                    });
+                  }
+          
+                  await shoesCollection.updateOne(
+                    {
+                      _id: shoe._id,
+                      "variants.color": item.color,
+                    },
+                    {
+                      $inc: {
+                        "variants.$.stock": -item.quantity,
+                        totalStock: -item.quantity,
+                      },
+                      $set: { updatedAt: new Date() },
+                    }
+                  );
+                }
+          
+                // =====================
+                // 👟 SHOES (COLOR + SIZE)
+                // =====================
+                else {
+                  const variant = shoe.variants?.find(
+                    (v) => v.color === item.color
+                  );
+          
+                  if (!variant) {
+                    return res
+                      .status(400)
+                      .send({ message: `Color not found: ${item.color}` });
+                  }
+          
+                  const sizeStock = variant.sizes?.[item.size] || 0;
           
                   if (sizeStock < item.quantity) {
                     return res.status(400).send({
@@ -410,10 +465,13 @@ async function run() {
                   }
           
                   await shoesCollection.updateOne(
-                    { _id: shoe._id },
+                    {
+                      _id: shoe._id,
+                      "variants.color": item.color,
+                    },
                     {
                       $inc: {
-                        [`stockBySize.${item.size}`]: -item.quantity,
+                        [`variants.$.sizes.${item.size}`]: -item.quantity,
                         totalStock: -item.quantity,
                       },
                       $set: { updatedAt: new Date() },
@@ -460,7 +518,7 @@ async function run() {
             }
         });
 
-    
+
 
         // Send a ping to confirm a successful connection
         // await client.db("admin").command({ ping: 1 });
