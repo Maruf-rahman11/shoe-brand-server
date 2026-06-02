@@ -54,14 +54,14 @@ async function run() {
         // Connect the client to the server	(optional starting in v4.7)
         // await client.connect();
         const db = client.db("kickboxbd");
-
+        const counterCollection = db.collection("counters");
         const shoesCollection = db.collection("shoes");
         const ordersCollection = db.collection("orders");
 
 
         const verifyFBToken = async (req, res, next) => {
             const authHeader = req.headers.authorization;
-            console.log(authHeader)
+            
             if (!authHeader) {
                 return res.status(401).send({ message: 'unauthorized access' })
             }
@@ -80,6 +80,21 @@ async function run() {
                 return res.status(403).send({ message: 'forbidden access' })
             }
         }
+        const generateSerial = () => {
+          const now = new Date();
+        
+          const year = String(now.getFullYear()).slice(-2);
+          const month = String(now.getMonth() + 1).padStart(2, "0");
+          const day = String(now.getDate()).padStart(2, "0");
+        
+          const hour = String(now.getHours()).padStart(2, "0");
+          const minute = String(now.getMinutes()).padStart(2, "0");
+          const second = String(now.getSeconds()).padStart(2, "0");
+        
+          const milli = String(now.getMilliseconds()).padStart(3, "0");
+        
+          return `${year}${month}${day}${hour}${minute}${second}${milli}`;
+        };
 
         // EMAIL ROUTE
         app.post('/send-confirmation-email', async (req, res) => {
@@ -119,43 +134,71 @@ async function run() {
                 res.status(500).send({ result: 'Email Failed' });
             }
         });
+        app.get("/shoes/serial/:serial", async (req, res) => {
+            const { serial } = req.params;
+        
+            const product = await shoesCollection.findOne({
+                serialNumber: serial
+            });
+        
+            if (!product) {
+                return res.status(404).send({ message: "Product not found" });
+            }
+        
+            res.send(product);
+        });
 
 
 
         app.get("/orders", verifyFBToken, async (req, res) => {
-            const {
-                page = 1,
-                limit = 8,
-                search
-            } = req.query;
-
-            const query = {};
-
-            // 🔍 Search by customer number
-            if (search) {
-                query["customer.customerNumber"] = {
-                    $regex: search,
-                    $options: "i",
-                };
-            }
-
-            const skip = (parseInt(page) - 1) * parseInt(limit);
-
-            const orders = await ordersCollection
-                .find(query)
-                .skip(skip)
-                .limit(parseInt(limit))
-                .sort({ createdAt: -1 }) // newest first (recommended)
-                .toArray();
-
-            const total = await ordersCollection.countDocuments(query);
-
-            res.send({
-                orders,
-                total,
-                page: parseInt(page),
-                limit: parseInt(limit),
-            });
+          const { page = 1, limit = 8, search, date } = req.query;
+        
+          const query = {};
+        
+          // 🔍 Search
+          if (search) {
+            query["customer.customerNumber"] = {
+              $regex: search,
+              $options: "i",
+            };
+          }
+        
+          // 📅 Date filter (BD timezone)
+          if (date) {
+            const start = new Date(date + "T00:00:00+06:00");
+            const end = new Date(date + "T23:59:59+06:00");
+        
+            query.createdAt = {
+              $gte: start,
+              $lte: end,
+            };
+          }
+        
+          const skip = (parseInt(page) - 1) * parseInt(limit);
+        
+          const orders = await ordersCollection
+            .find(query)
+            .skip(skip)
+            .limit(parseInt(limit))
+            .sort({ createdAt: -1 })
+            .toArray();
+        
+          const total = await ordersCollection.countDocuments(query);
+        
+          // 🔥 NEW: calculate total sales
+          const allMatchingOrders = await ordersCollection.find(query).toArray();
+        
+          const totalSales = allMatchingOrders.reduce((sum, order) => {
+            return sum + ( order.productsValue || 0);
+          }, 0);
+        
+          res.send({
+            orders,
+            total,
+            totalSales, // ✅ send this
+            page: parseInt(page),
+            limit: parseInt(limit),
+          });
         });
 
 
@@ -172,62 +215,175 @@ async function run() {
 
 
         app.get("/shoes", async (req, res) => {
-            const {
+          const {
+              category,
+              popular,
+              discount,
+              search,
+              serial,
+              sort,
+              page = 1,
+              limit = 8,
+          } = req.query;
+      
+          const query = {};
+          let sortQuery = {};
+      
+          // category
+          if (category) query.category = category;
+      
+          // popular
+          if (popular !== undefined) {
+              query.popular = popular === "true";
+          }
+      
+          // discount
+          if (discount === "true") {
+              query.discountPrice = { $gt: 0 };
+          }
+      
+          // search by name
+          if (search) {
+              query.name = { $regex: search, $options: "i" };
+          }
+      
+          // 🔥 search by serial number
+          if (serial) {
+              query.serialNumber = {
+                  $regex: serial,
+                  $options: "i",
+              };
+          }
+      
+          // sorting
+          if (sort === "low-high") {
+              sortQuery =
+                  discount === "true"
+                      ? { discountPrice: 1 }
+                      : { price: 1 };
+          }
+      
+          if (sort === "high-low") {
+              sortQuery =
+                  discount === "true"
+                      ? { discountPrice: -1 }
+                      : { price: -1 };
+          }
+      
+          const skip = (page - 1) * parseInt(limit);
+      
+          const shoes = await shoesCollection
+              .find(query)
+              .sort(sortQuery)
+              .skip(skip)
+              .limit(parseInt(limit))
+              .toArray();
+      
+          const total = await shoesCollection.countDocuments(query);
+      
+          res.send({
+              shoes,
+              total,
+              page: parseInt(page),
+              limit: parseInt(limit),
+          });
+      });
+        app.get("/admin/items", verifyFBToken, async (req, res) => {
+            try {
+              const {
                 category,
                 popular,
                 discount,
                 search,
-                sort,        // low-high | high-low
+                sort, // low-high | high-low
                 page = 1,
                 limit = 8,
-            } = req.query;
-
-            const query = {};
-            let sortQuery = {};
-
-            if (category) query.category = category;
-            if (popular !== undefined) query.popular = popular === "true";
-
-            if (discount === "true") {
+              } = req.query;
+          
+              const query = {};
+              let sortQuery = {};
+          
+              const pageNum = parseInt(page);
+              const limitNum = parseInt(limit);
+          
+              // 🎯 filters
+              if (category) query.category = category;
+          
+              if (popular !== undefined) {
+                query.popular = popular === "true";
+              }
+          
+              if (discount === "true") {
                 query.discountPrice = { $gt: 0 };
-            }
-
-            // 🔍 search
-            if (search) {
+              }
+          
+              // 🔍 search
+              if (search) {
                 query.name = { $regex: search, $options: "i" };
-            }
-
-            // 💰 price sorting
-            if (sort === "low-high") {
+              }
+          
+              // 💰 sorting
+              if (sort === "low-high") {
                 sortQuery = discount === "true"
-                    ? { discountPrice: 1 }
-                    : { price: 1 };
-            }
-
-            if (sort === "high-low") {
+                  ? { discountPrice: 1 }
+                  : { price: 1 };
+              }
+          
+              if (sort === "high-low") {
                 sortQuery = discount === "true"
-                    ? { discountPrice: -1 }
-                    : { price: -1 };
-            }
-
-            const skip = (page - 1) * limit;
-
-            const shoes = await shoesCollection
+                  ? { discountPrice: -1 }
+                  : { price: -1 };
+              }
+          
+              const skip = (pageNum - 1) * limitNum;
+          
+              // 🔐 admin gets FULL data including costPrice
+              const shoes = await shoesCollection
                 .find(query)
                 .sort(sortQuery)
                 .skip(skip)
-                .limit(parseInt(limit))
+                .limit(limitNum)
                 .toArray();
-
-            const total = await shoesCollection.countDocuments(query);
-
-            res.send({
+          
+              const total = await shoesCollection.countDocuments(query);
+          
+              res.send({
                 shoes,
                 total,
-                page: parseInt(page),
-                limit: parseInt(limit),
-            });
-        });
+                page: pageNum,
+                limit: limitNum,
+              });
+          
+            } catch (error) {
+              console.error("Admin items fetch error:", error);
+              res.status(500).send({ message: "Server error" });
+            }
+          });
+        app.get("/admin/items/:id", verifyFBToken, async (req, res) => {
+            try {
+              const { id } = req.params;
+          
+              // 🛡️ validate ObjectId
+              if (!ObjectId.isValid(id)) {
+                return res.status(400).send({ message: "Invalid item ID" });
+              }
+          
+              const query = { _id: new ObjectId(id) };
+          
+              // 🔐 admin gets full data including costPrice
+              const item = await shoesCollection.findOne(query);
+          
+              if (!item) {
+                return res.status(404).send({ message: "Item not found" });
+              }
+          
+              res.send(item);
+          
+            } catch (error) {
+              console.error("Admin item fetch error:", error);
+              res.status(500).send({ message: "Server error" });
+            }
+          });  
 
 
 
@@ -240,12 +396,40 @@ async function run() {
             res.send(result);
         })
 
-        app.post("/shoes", verifyFBToken, async (req, res) => {
-            const product = req.body;
-            // Insert product into MongoDB
-            const result = await shoesCollection.insertOne(product);
-            res.send(result);
+        // app.post("/shoes", verifyFBToken, async (req, res) => {
+        //     const product = req.body;
+        //     // Insert product into MongoDB
+        //     const result = await shoesCollection.insertOne(product);
+        //     res.send(result);
 
+        // });
+         
+
+        app.post("/shoes", verifyFBToken, async (req, res) => {
+            try {
+                const product = req.body;
+        
+                // 🔥 generate serial
+                const serialNumber = await generateSerial();
+        
+                const newProduct = {
+                    ...product,
+                    serialNumber,
+                    createdAt: new Date(),
+                };
+        
+                const result = await shoesCollection.insertOne(newProduct);
+        
+                res.send({
+                    success: true,
+                    insertedId: result.insertedId,
+                    serialNumber,
+                });
+        
+            } catch (error) {
+                console.error("Error adding product:", error);
+                res.status(500).send({ message: "Failed to add product" });
+            }
         });
 
         app.post("/orders", async (req, res) => {
@@ -253,16 +437,16 @@ async function run() {
 
 
                 const orderData = req.body;
+               
 
-                const { customer, products, totalAmount } = orderData;
+                const { customer, products, totalAmount,status } = orderData;
+                console.log(status)
                 if (
                     !customer ||
                     !customer.customerName ||
-                    !customer.email ||
-                    !customer.customerNumber ||
-                    !customer.district ||
-                    !customer.address ||
-                    !customer.deliveryZone
+                   
+                    !customer.customerNumber 
+               
                 ) {
                     return res.status(400).send({ message: "Customer information is incomplete" });
                 }
@@ -270,9 +454,10 @@ async function run() {
                 // Add metadata
                 const newOrder = {
                     ...orderData,
-                    status: "pending",        // pending | confirmed | delivered
+                    status: status ? status : "pending" ,        // pending | confirmed | delivered
                     createdAt: new Date(),
                 };
+                console.log(newOrder)
 
                 const result = await ordersCollection.insertOne(newOrder);
 
@@ -370,129 +555,120 @@ async function run() {
         });
 
         app.patch("/items/update/update-stock", async (req, res) => {
-            try {
-              const { products } = req.body;
-          
-              for (const item of products) {
-                const shoe = await shoesCollection.findOne({
-                  _id: new ObjectId(item.shoeId),
-                });
-          
-                if (!shoe) {
-                  return res.status(404).send({ message: "Product not found" });
+          try {
+            const { products } = req.body;
+        
+            for (const item of products) {
+              const product = await shoesCollection.findOne({
+                _id: new ObjectId(item.shoeId),
+              });
+        
+              if (!product) {
+                return res.status(404).send({ message: "Product not found" });
+              }
+        
+              const quantity = Number(item.quantity || 0);
+              if (quantity <= 0) {
+                return res.status(400).send({ message: "Invalid quantity" });
+              }
+        
+              // =========================
+              // 🧠 CASE 1: Variant exists (color/size based stock)
+              // =========================
+              if (product.variants && product.variants.length > 0) {
+                const variantIndex = product.variants.findIndex(
+                  (v) => v.color === item.color
+                );
+        
+                if (variantIndex === -1) {
+                  return res.status(400).send({
+                    message: `Color not found: ${item.color}`,
+                  });
                 }
-          
-                const isSimple =
-                  shoe.category === "Shoe care" ||
-                  shoe.category === "Shoe accessories";
-          
-                const isCap = shoe.category === "Caps";
-          
-                // =====================
-                // 🧴 SIMPLE PRODUCTS
-                // =====================
-                if (isSimple) {
-                  if ((shoe.totalStock || 0) < item.quantity) {
-                    return res
-                      .status(400)
-                      .send({ message: `Out of stock: ${shoe.name}` });
-                  }
-          
-                  await shoesCollection.updateOne(
-                    { _id: shoe._id },
-                    {
-                      $inc: { totalStock: -item.quantity },
-                      $set: { updatedAt: new Date() },
-                    }
-                  );
-                }
-          
-                // =====================
-                // 🧢 CAPS (COLOR BASED)
-                // =====================
-                else if (isCap) {
-                  const variant = shoe.variants?.find(
-                    (v) => v.color === item.color
-                  );
-          
-                  if (!variant) {
-                    return res
-                      .status(400)
-                      .send({ message: `Color not found: ${item.color}` });
-                  }
-          
-                  if ((variant.stock || 0) < item.quantity) {
+        
+                const variant = product.variants[variantIndex];
+        
+                // If size exists → treat as size-based stock
+                if (item.size && variant.sizes) {
+                  const sizeStock = variant.sizes[item.size] || 0;
+        
+                  if (sizeStock < quantity) {
                     return res.status(400).send({
-                      message: `Color ${item.color} out of stock for ${shoe.name}`,
+                      message: `Size ${item.size} out of stock for ${product.name}`,
                     });
                   }
-          
+        
                   await shoesCollection.updateOne(
                     {
-                      _id: shoe._id,
+                      _id: product._id,
                       "variants.color": item.color,
                     },
                     {
                       $inc: {
-                        "variants.$.stock": -item.quantity,
-                        totalStock: -item.quantity,
+                        [`variants.$.sizes.${item.size}`]: -quantity,
+                        totalStock: -quantity,
                       },
                       $set: { updatedAt: new Date() },
                     }
                   );
-                }
-          
-                // =====================
-                // 👟 SHOES (COLOR + SIZE)
-                // =====================
+                } 
+                // Otherwise color-based stock
                 else {
-                  const variant = shoe.variants?.find(
-                    (v) => v.color === item.color
-                  );
-          
-                  if (!variant) {
-                    return res
-                      .status(400)
-                      .send({ message: `Color not found: ${item.color}` });
-                  }
-          
-                  const sizeStock = variant.sizes?.[item.size] || 0;
-          
-                  if (sizeStock < item.quantity) {
+                  if ((variant.stock || 0) < quantity) {
                     return res.status(400).send({
-                      message: `Size ${item.size} out of stock for ${shoe.name}`,
+                      message: `Color ${item.color} out of stock for ${product.name}`,
                     });
                   }
-          
+        
                   await shoesCollection.updateOne(
                     {
-                      _id: shoe._id,
+                      _id: product._id,
                       "variants.color": item.color,
                     },
                     {
                       $inc: {
-                        [`variants.$.sizes.${item.size}`]: -item.quantity,
-                        totalStock: -item.quantity,
+                        "variants.$.stock": -quantity,
+                        totalStock: -quantity,
                       },
                       $set: { updatedAt: new Date() },
                     }
                   );
                 }
               }
-          
-              res.send({ success: true });
-            } catch (error) {
-              console.error("Stock update failed:", error);
-              res.status(500).send({ message: "Stock update failed" });
+        
+              // =========================
+              // 🧾 CASE 2: Simple product (no variants)
+              // =========================
+              else {
+                if ((product.totalStock || 0) < quantity) {
+                  return res.status(400).send({
+                    message: `Out of stock: ${product.name}`,
+                  });
+                }
+        
+                await shoesCollection.updateOne(
+                  { _id: product._id },
+                  {
+                    $inc: { totalStock: -quantity },
+                    $set: { updatedAt: new Date() },
+                  }
+                );
+              }
             }
-          });
+        
+            res.send({ success: true, message: "Stock updated successfully" });
+          } catch (error) {
+            console.error("Stock update failed:", error);
+            res.status(500).send({ message: "Stock update failed" });
+          }
+        });
 
         app.patch("/orders/:id/status", async (req, res) => {
             try {
                 const { id } = req.params;
                 const { status } = req.body;
 
-                const allowedStatuses = ["pending", "confirmed", "canceled"];
+                const allowedStatuses = ["pending", "confirmed", "delivered"];
 
                 if (!allowedStatuses.includes(status)) {
                     return res.status(400).send({ message: "Invalid order status" });
