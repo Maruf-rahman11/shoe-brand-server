@@ -693,6 +693,61 @@ async function run() {
                 res.status(500).send({ success: false });
             }
         });
+        app.patch("/orders/update-due/:id", verifyFBToken, async (req, res) => {
+          const { id } = req.params;
+          const { amount, method } = req.body;
+        
+          try {
+            const paymentAmount = Number(amount);
+        
+            if (isNaN(paymentAmount) || paymentAmount <= 0) {
+              return res.status(400).send({ success: false, message: "Invalid payment amount" });
+            }
+        
+            if (!["Cash", "Bkash", "Bank"].includes(method)) {
+              return res.status(400).send({ success: false, message: "Invalid payment method" });
+            }
+        
+            const order = await ordersCollection.findOne({ _id: new ObjectId(id) });
+        
+            if (!order) {
+              return res.status(404).send({ success: false, message: "Order not found" });
+            }
+        
+            const currentDue = Number(order.due) || 0;
+        
+            if (paymentAmount > currentDue) {
+              return res.status(400).send({ success: false, message: "Payment exceeds due amount" });
+            }
+        
+            // If the selected payment method is not a number, initialize it to 0
+            const currentMethodAmount = Number(order[method]) || 0;
+        
+            // Update the order safely
+            const result = await ordersCollection.updateOne(
+              { _id: new ObjectId(id) },
+              {
+                $set: {
+                  due: currentDue - paymentAmount < 0 ? 0 : currentDue - paymentAmount,
+                  [method]: currentMethodAmount + paymentAmount
+                }
+              }
+            );
+        
+            res.send({
+              success: true,
+              message: "Payment applied successfully",
+              result
+            });
+        
+          } catch (error) {
+            res.status(500).send({
+              success: false,
+              message: "Failed to update due",
+              error: error.message
+            });
+          }
+        });
 
 
 
