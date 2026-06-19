@@ -4,17 +4,48 @@ const dotenv = require("dotenv");
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 const admin = require("firebase-admin");
 const nodemailer = require("nodemailer");
+const rateLimit = require("express-rate-limit");
 
 
 dotenv.config();
 
+const generalLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 200,
+    message: { message: "Too many requests, please try again later." },
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: (req) => req.ip,
+    validate: false,
+});
+
+const orderLimiter = rateLimit({
+    windowMs: 60 * 60 * 1000,
+    max: 20,
+    message: { message: "Too many orders submitted, please try again later." },
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: (req) => req.ip,
+    validate: false,
+});
+
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-
+app.set('trust proxy', 1);
 // Middleware
-app.use(cors());
+app.use(cors({
+    origin: [
+        "https://kickboxbd.com",
+        "https://www.kickboxbd.com",
+        "https://kickboxpos.netlify.app",
+        "http://localhost:5173"  
+    ],
+    credentials: true
+}));
 app.use(express.json());
+app.use(generalLimiter);
+
 
 
 
@@ -25,9 +56,7 @@ admin.initializeApp({
 });
 
 const uri = `mongodb+srv://${encodeURIComponent(process.env.DB_USER)}:${encodeURIComponent(process.env.DB_PASS)}@cluster0.gdfsllv.mongodb.net/?appName=Cluster0`;
-console.log("USER:", `"${process.env.DB_USER}"`);
 
-console.log("PASS:", `"${process.env.DB_PASS}"`);
 
 
 const client = new MongoClient(uri, {
@@ -49,10 +78,21 @@ const emailTransporter = nodemailer.createTransport(
     }
 );
 
+let isConnected = false;
+
+async function ensureConnection() {
+    if (!isConnected) {
+        await client.connect();
+        isConnected = true;
+        console.log("MongoDB connected");
+    }
+}
+
+
 async function run() {
     try {
-        // Connect the client to the server	(optional starting in v4.7)
-        // await client.connect();
+      // await client.connect()
+        
         const db = client.db("kickboxbd");
         const counterCollection = db.collection("counters");
         const shoesCollection = db.collection("shoes");
@@ -99,7 +139,8 @@ async function run() {
         // EMAIL ROUTE
         app.post('/send-confirmation-email', async (req, res) => {
             const { email, order } = req.body; // receive customer email & order details
-            console.log(email, order)
+            
+            
 
             if (!email || !order) {
                 return res.status(400).send({ result: 'Missing email or order data' });
@@ -215,6 +256,7 @@ async function run() {
 
 
         app.get("/shoes", async (req, res) => {
+          await ensureConnection();
           const {
               category,
               popular,
@@ -432,7 +474,7 @@ async function run() {
             }
         });
 
-        app.post("/orders", async (req, res) => {
+        app.post("/orders",orderLimiter, async (req, res) => {
             try {
 
 
